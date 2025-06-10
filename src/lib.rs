@@ -1,5 +1,8 @@
 use std::{collections::HashMap, iter::repeat_with};
 
+/// Binary S-Expression
+/// - Atoms are in bytes
+/// - Lists are represented as vector
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BSExp {
     Atom(Vec<u8>),
@@ -7,10 +10,12 @@ pub enum BSExp {
 }
 
 impl BSExp {
+    /// Create a new BSExp from an atom
     pub fn atom<T: Into<Vec<u8>>>(value: T) -> Self {
         BSExp::Atom(value.into())
     }
 
+    /// Create a new BSExp from a list of BSExp
     pub fn list<T: Into<Vec<BSExp>>>(value: T) -> Self {
         BSExp::List(value.into())
     }
@@ -68,8 +73,9 @@ mod tests {
 // For constant pool, positive indices are for constants,
 //   and negative indices for special constants.
 
-type Idx = i32;
+type Idx = i64;
 impl BSExp {
+    /// Serialize the BSExp into a byte array.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut symbol_table = HashMap::new();
         let mut constant_pool = Vec::<u8>::new();
@@ -120,7 +126,7 @@ impl BSExp {
 }
 
 fn read_idx<'a, I: Iterator<Item = &'a u8>>(iter: &mut I) -> Result<Idx, String> {
-    let mut bytes = [0u8; 4];
+    let mut bytes = [0u8; size_of::<Idx>()];
     for i in 0..4 {
         if let Some(&byte) = iter.next() {
             bytes[i] = byte;
@@ -132,6 +138,7 @@ fn read_idx<'a, I: Iterator<Item = &'a u8>>(iter: &mut I) -> Result<Idx, String>
 }
 
 impl BSExp {
+    /// Deserialize a byte array into a BSExp.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
         let mut cursor = bytes.iter();
         let constant_pool_length = read_idx(&mut cursor)? as usize;
@@ -158,7 +165,7 @@ impl BSExp {
             // This is an atom
             Some(Ok(idx)) if idx < 0 => {
                 let idx = !idx as usize;
-                let len: &[u8; 4] = &constant_pool[idx..idx + 4]
+                let len: &[u8; size_of::<Idx>()] = &constant_pool[idx..idx + size_of::<Idx>()]
                     .try_into()
                     .map_err(|_| "Invalid constant pool index.".to_string())?;
                 let idx = idx + 4;
