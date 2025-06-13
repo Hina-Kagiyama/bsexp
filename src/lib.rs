@@ -146,6 +146,29 @@ fn test_bsexp_format() {
         ["fib-iter", "0", "1", "n"]
     ]);
     assert_eq!(
+        format!("{fib}"),
+        "(define (fibonacci n) (define (fib-iter a b count) (if (= count 0) a (fib-iter b (+ a b) (- count 1)))) (fib-iter 0 1 n))"
+    );
+}
+
+#[test]
+fn test_bsexp_format_pretty() {
+    let fib = bsexp!([
+        "define",
+        ["fibonacci", "n"],
+        [
+            "define",
+            ["fib-iter", "a", "b", "count"],
+            [
+                "if",
+                ["=", "count", "0"],
+                "a",
+                ["fib-iter", "b", ["+", "a", "b"], ["-", "count", "1"]]
+            ]
+        ],
+        ["fib-iter", "0", "1", "n"]
+    ]);
+    assert_eq!(
         format!("{fib:#}"),
         "(define\n (fibonacci n)\n (define\n  (fib-iter a b count)\n  (if (= count 0) a (fib-iter b (+ a b) (- count 1))))\n (fib-iter 0 1 n))"
     );
