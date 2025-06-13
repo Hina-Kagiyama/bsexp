@@ -1,10 +1,10 @@
+use std::iter::repeat_with;
+
 /// Variant-Length Integer
 /// This type can be serialized to 1 to 8 bytes
 /// encoding atmost 2^56 bit data
 pub trait VLI {
-    fn write_vli_bytes<F, E>(self, writer: F) -> Result<usize, E>
-    where
-        F: FnMut(u8) -> Result<(), E>;
+    fn to_vli_bytes(self) -> ([u8; 9], usize);
 
     fn read_vli_bytes<F, E>(reader: F) -> Result<Self, E>
     where
@@ -12,37 +12,36 @@ pub trait VLI {
         F: FnMut() -> Result<u8, E>;
 }
 
-const MAX_ENCODING_LENGTH: usize = 9;
-
 impl VLI for u64 {
     #[inline]
-    fn write_vli_bytes<F, E>(self, mut writer: F) -> Result<usize, E>
-    where
-        F: FnMut(u8) -> Result<(), E>,
-    {
-        let tmp = self as u64;
-        assert!((tmp & (0b1 << 63) == 0));
-
-        // segments:
-        // 7 bits + (7 bits + 7 bits + 7 bits + 7 bits + 7 bits + 7 bits + 7 bits)
-        let segs = [
-            (tmp & 0b0111_1111) as u8,
-            ((tmp & (0b0111_1111 << (1 * 7))) >> (1 * 7)) as u8,
-            ((tmp & (0b0111_1111 << (2 * 7))) >> (2 * 7)) as u8,
-            ((tmp & (0b0111_1111 << (3 * 7))) >> (3 * 7)) as u8,
-            ((tmp & (0b0111_1111 << (4 * 7))) >> (4 * 7)) as u8,
-            ((tmp & (0b0111_1111 << (5 * 7))) >> (5 * 7)) as u8,
-            ((tmp & (0b0111_1111 << (6 * 7))) >> (6 * 7)) as u8,
-            ((tmp & (0b0111_1111 << (7 * 7))) >> (7 * 7)) as u8,
-            ((tmp & (0b0111_1111 << (8 * 7))) >> (8 * 7)) as u8,
-        ];
-
-        let len = MAX_ENCODING_LENGTH - segs.iter().cloned().rev().take_while(|&x| x == 0).count();
-        let mut it = segs.into_iter();
-        (&mut it)
-            .take(len - 1)
-            .try_for_each(|x| writer(x | 0b1000_0000))?;
-        it.take(1).try_for_each(|x| writer(x)).map(|()| len)
+    fn to_vli_bytes(self) -> ([u8; 9], usize) {
+        let len = match self {
+            _ if self < (0b1 << (1 * 7)) => 1,
+            _ if self < (0b1 << (2 * 7)) => 2,
+            _ if self < (0b1 << (3 * 7)) => 3,
+            _ if self < (0b1 << (4 * 7)) => 4,
+            _ if self < (0b1 << (5 * 7)) => 5,
+            _ if self < (0b1 << (6 * 7)) => 6,
+            _ if self < (0b1 << (7 * 7)) => 7,
+            _ if self < (0b1 << (8 * 7)) => 8,
+            _ => 9,
+        };
+        let msk = |n| if len > n { 0b1000_0000 } else { 0 };
+        let sec = |m: u64, n: usize| ((self & (m << (n * 7))) >> (n * 7)) as u8;
+        (
+            [
+                sec(0b0111_1111, 0) | msk(1), // - seg0: 7 bits, must exist
+                sec(0b0111_1111, 1) | msk(2), // - seg1: 7 bits
+                sec(0b0111_1111, 2) | msk(3), // - seg2: 7 bits
+                sec(0b0111_1111, 3) | msk(4), // - seg3: 7 bits
+                sec(0b0111_1111, 4) | msk(5), // - seg4: 7 bits
+                sec(0b0111_1111, 5) | msk(6), // - seg5: 7 bits
+                sec(0b0111_1111, 6) | msk(7), // - seg6: 7 bits
+                sec(0b0111_1111, 7) | msk(8), // - seg7: 7 bits
+                sec(0b1111_1111, 8),          // - seg8: 8 bits
+            ],
+            len,
+        )
     }
 
     #[inline]
@@ -50,63 +49,53 @@ impl VLI for u64 {
     where
         F: FnMut() -> Result<u8, E>,
     {
-        let mut ans = 0;
-        for _ in 0..MAX_ENCODING_LENGTH {
-            let x = reader()? as u64;
-            ans <<= 7;
-            ans |= x & (0b0111_1111);
-            if (x & 0b1000_0000) == 0 {
-                break;
-            }
+        use std::ops::ControlFlow::{Break, Continue};
+        match repeat_with(&mut reader)
+            .take(8)
+            .enumerate()
+            .try_fold(0, |acc, (i, x)| match x {
+                Ok(x) => {
+                    if (x & 0b1000_0000) != 0 {
+                        Continue(acc | (((x & 0b0111_1111) as u64) << (i * 7)))
+                    } else {
+                        Break(Ok(acc | ((x as u64) << (i * 7))))
+                    }
+                }
+                Err(e) => Break(Err(e)),
+            }) {
+            Continue(x) => reader().map(|y| x | ((y & 0b1111_1111) as u64) << 56),
+            Break(r) => r,
         }
-        Ok(ans)
     }
 }
 
 #[test]
 fn test_vli_encode_decode() {
-    use core::convert::Infallible;
+    // use core::convert::Infallible;
     use std::iter::repeat_with;
-    type I = Result<(), Infallible>;
+    // type I = Result<(), Infallible>;
     use VLI;
 
     // test writing
     let mut buf = Vec::new();
-    let v1 = [
-        127,
-        16383,
-        2097151,
-        268435455,
-        34359738367,
-        4398046511103,
-        562949953421311,
-        72057594037927935,
-        9223372036854775807,
-        // 18446744073709551615,
-    ];
-    v1.iter().for_each(|i| {
-        i.write_vli_bytes(|x| I::Ok(buf.push(x))).unwrap();
+    let mut seed = 0x1234_5678_9ABC_DEF0u64;
+    let v1 = repeat_with(|| {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+        seed
+    })
+    .take(1000)
+    .collect::<Vec<_>>();
+    v1.iter().map(|i| i.to_vli_bytes()).for_each(|(v, l)| {
+        buf.extend_from_slice(&v[0..l]);
     });
 
     // test reading
     let mut cursor = buf.into_iter();
 
-    assert_eq!(
-        repeat_with(|| {
-            <u64 as VLI>::read_vli_bytes(|| match cursor.next() {
-                Some(x) => Ok(x),
-                None => Err(()),
-            })
-        })
-        .map_while(|x| match x {
-            Ok(x) => Some(x),
-            Err(_) => None,
-        })
-        .zip(v1.into_iter())
-        .fold(true, |acc, (l, r)| {
-            println!("{l:064b} {r:064b}");
-            acc && (l == r)
-        }),
-        true
+    assert!(
+        repeat_with(|| <u64 as VLI>::read_vli_bytes(|| { cursor.next().ok_or(()) }))
+            .map_while(|x| x.ok())
+            .zip(v1.into_iter())
+            .fold(true, |acc, (l, r)| { acc && (l == r) })
     )
 }

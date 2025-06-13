@@ -1,4 +1,4 @@
-pub mod serialization;
+// pub mod serialization;
 pub mod vli;
 
 use std::fmt::{self, Display};
