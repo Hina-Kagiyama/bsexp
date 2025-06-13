@@ -1,3 +1,6 @@
+pub mod serialization;
+pub mod vli;
+
 use std::fmt::{self, Display};
 
 /// Binary S-Expression
@@ -147,5 +150,3 @@ fn test_bsexp_format() {
         "(define\n (fibonacci n)\n (define\n  (fib-iter a b count)\n  (if (= count 0) a (fib-iter b (+ a b) (- count 1))))\n (fib-iter 0 1 n))"
     );
 }
-
-pub mod vli;

@@ -1,5 +1,3 @@
-use std::iter::repeat_with;
-
 /// Variant-Length Integer
 /// This type can be serialized to 1 to 8 bytes
 /// encoding atmost 2^56 bit data
@@ -43,8 +41,7 @@ impl VLI for u64 {
         let mut it = segs.into_iter();
         (&mut it)
             .take(len - 1)
-            .try_for_each(|x| writer(x | 0b1000_0000))
-            .map(|()| len)?;
+            .try_for_each(|x| writer(x | 0b1000_0000))?;
         it.take(1).try_for_each(|x| writer(x)).map(|()| len)
     }
 
@@ -53,25 +50,16 @@ impl VLI for u64 {
     where
         F: FnMut() -> Result<u8, E>,
     {
-        repeat_with(|| reader())
-            .take(MAX_ENCODING_LENGTH)
-            .try_fold(0, |acc, x| match x {
-                Ok(x) => {
-                    let q = (acc << 7) + (x & 0b0111_1111) as u64;
-                    if (x & 0b1000_0000) != 0 {
-                        Ok(q)
-                    } else {
-                        Err((q, None))
-                    }
-                }
-                Err(e) => Err((0, Some(e))),
-            })
-            .err()
-            .map(|(r, e)| match e {
-                Some(e) => Err(e),
-                None => Ok(r),
-            })
-            .unwrap() // can always unwrap
+        let mut ans = 0;
+        for _ in 0..MAX_ENCODING_LENGTH {
+            let x = reader()? as u64;
+            ans <<= 7;
+            ans |= x & (0b0111_1111);
+            if (x & 0b1000_0000) == 0 {
+                break;
+            }
+        }
+        Ok(ans)
     }
 }
 
